@@ -29,10 +29,26 @@ import os
 import sys
 import json
 import logging
-from threading import Lock
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from logging import LogRecord
+
+# 保存的日志级别，可在UI修改
+Save_Log_Level: int = logging.WARNING
+
+# 日志保存目录
+Logs_Dir = "./logs"
+Logs_Dir = os.path.abspath(Logs_Dir)
+
+# 日志级别，对应的int值由小到大
+_Log_Levels = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+    "NONE": logging.CRITICAL + 10,  # 最大，表示不记录日志
+}
 
 
 # 覆盖过滤器
@@ -54,11 +70,11 @@ class _CoverFilter(logging.Filter):
 class _LevelFormatter(logging.Formatter):
     # 定义日志级别和对应符号的映射
     LEVEL_SYMBOLS = {
-        "DEBUG": "√",
-        "INFO": "i",
+        "DEBUG": " ",
+        "INFO": "√",
         "WARNING": "?",
         "ERROR": "×",
-        "CRITICAL": "!",
+        "CRITICAL": "×××",
     }
 
     def format(self, record):
@@ -112,28 +128,27 @@ class _JsonRotatingFileHandler(RotatingFileHandler):
 
     # 发送日志
     def emit(self, record: LogRecord):
+        # 检查文件大小并进行轮转
+        if self.shouldRollover(record):
+            self.doRollover()
         # 日志信息转字典
         try:
             log_dict = self._record_to_dict(record)
         except Exception:
             self.handleError(record)
         # 输出到日志文件
-        try:
-            with open(self.baseFilename, "a", encoding=self.encoding) as f:
-                json.dump(log_dict, f, ensure_ascii=False)
-                f.write("\n")
-        except Exception:
-            self.handleError(record)
+        if record.levelno >= Save_Log_Level:
+            try:
+                with open(self.baseFilename, "a", encoding=self.encoding) as f:
+                    json.dump(log_dict, f, ensure_ascii=False)
+                    f.write("\n")
+            except Exception:
+                self.handleError(record)
+        # TODO: 输出到UI界面
 
 
 # 日志记录器 管理类
 class _LogManager:
-
-    # 日志目录路径
-    _log_dir = "./logs"
-    # 确保线程安全的锁
-    _lock = Lock()
-
     @staticmethod  # 控制台处理器
     def _get_console_handler():
         # 显式规定输出到 stderr ，避免干涉命令行使用
@@ -147,12 +162,12 @@ class _LogManager:
     @staticmethod  # json处理器，输出到本地文件及UI
     def _get_json_handler():
         # 确保日志目录存在
-        if not os.path.exists(_LogManager._log_dir):
-            os.makedirs(_LogManager._log_dir)
+        if not os.path.exists(Logs_Dir):
+            os.makedirs(Logs_Dir)
         # 获取当前日期
         current_date = datetime.now().strftime("%Y-%m-%d")
         # 构造错误日志文件路径
-        log_file = os.path.join(_LogManager._log_dir, f"{current_date}.jsonl.txt")
+        log_file = os.path.join(Logs_Dir, f"log_{current_date}.jsonl.txt")
         # 创建json处理器
         json_handler = _JsonRotatingFileHandler(
             log_file,
@@ -215,3 +230,19 @@ def get_qt_message_handler():
             logger.critical(msg, extra=extra)
 
     return qt_message_handler
+
+
+# 更改保存的日志级别，成功返回T
+def change_save_log_level(levelname):
+    global Save_Log_Level
+    if levelname in _Log_Levels.keys():
+        Save_Log_Level = _Log_Levels[levelname]
+        logger.info(f"设置保存日志级别： {levelname}")
+        return True
+    logger.error(f"设置保存日志级别 {levelname} 失败。")
+    return False
+
+
+# 打开日志保存目录
+def open_logs_dir():
+    os.startfile(Logs_Dir)
